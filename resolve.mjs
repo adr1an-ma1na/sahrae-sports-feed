@@ -15,8 +15,8 @@ process.on('unhandledRejection', (e) => console.warn('unhandledRejection:', e?.m
 process.on('uncaughtException', (e) => console.warn('uncaughtException:', e?.message || e));
 
 const BASES = ['https://streamed.pk', 'https://streamed.su', 'https://streamed.st'];
-const MAX_EVENTS = 36;
-const CONCURRENCY = 3;
+const MAX_EVENTS = 44;
+const CONCURRENCY = 4;
 const UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
 
@@ -67,20 +67,35 @@ async function main() {
   const liveRes = await getJSON('/api/matches/live');
   const live = liveRes?.data || [];
   const base = liveRes?.base || BASES[0];
-  live.sort((a, b) => (b.popular ? 1 : 0) - (a.popular ? 1 : 0) || a.date - b.date);
-  const events = live.slice(0, MAX_EVENTS);
-  console.log(`resolving ${events.length} live events from ${base}`);
+  const todayRes = await getJSON('/api/matches/all-today');
+  const today = todayRes?.data || [];
+
+  const liveSet = new Set(live.map((m) => m.id));
+  // Full schedule (live first, then today), deduped — this is what the app lists.
+  const seen = new Set();
+  const schedule = [];
+  for (const m of [...live, ...today]) {
+    if (!m?.id || seen.has(m.id) || !m.sources?.length) continue;
+    seen.add(m.id);
+    schedule.push(m);
+  }
+
+  // Resolve real streams for the LIVE events (only those are actually broadcasting).
+  const liveEvents = live.filter((m) => m.sources?.length);
+  liveEvents.sort((a, b) => (b.popular ? 1 : 0) - (a.popular ? 1 : 0) || a.date - b.date);
+  const toResolve = liveEvents.slice(0, MAX_EVENTS);
+  console.log(`schedule: ${schedule.length} events · resolving ${toResolve.length} live from ${base}`);
 
   const browser = await puppeteer.launch({
     headless: 'new',
     args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--mute-audio'],
   });
 
-  const results = [];
+  const streamsById = new Map();
   let idx = 0;
   async function worker() {
-    while (idx < events.length) {
-      const ev = events[idx++];
+    while (idx < toResolve.length) {
+      const ev = toResolve[idx++];
       const streams = [];
       let attempts = 0;
       for (const src of ev.sources || []) {
@@ -90,7 +105,6 @@ async function main() {
           const r = await fetch(`${base}/api/stream/${src.source}/${src.id}`, { headers: { 'User-Agent': UA } });
           if (!r.ok) continue;
           const list = await r.json();
-          // Try the first couple of stream numbers for this source.
           for (const st of (Array.isArray(list) ? list : []).slice(0, 2)) {
             if (streams.length >= 2) break;
             if (!st?.embedUrl) continue;
@@ -103,7 +117,7 @@ async function main() {
         } catch {}
       }
       if (streams.length) {
-        results.push({ id: ev.id, title: ev.title, category: ev.category, date: ev.date, popular: !!ev.popular, teams: ev.teams || null, streams });
+        streamsById.set(ev.id, streams);
         console.log('  ✓', ev.title, `(${streams.length})`);
       } else {
         console.log('  ✗', ev.title);
@@ -113,9 +127,22 @@ async function main() {
   await Promise.all(Array.from({ length: CONCURRENCY }, worker));
   await browser.close();
 
-  results.sort((a, b) => (b.popular ? 1 : 0) - (a.popular ? 1 : 0) || a.date - b.date);
-  writeFileSync('feed.json', JSON.stringify({ updated: Date.now(), base, count: results.length, events: results }));
-  console.log(`done — ${results.length}/${events.length} events resolved with a stream`);
+  // Emit the full schedule with streams attached where we resolved them.
+  const events = schedule.map((m) => ({
+    id: m.id,
+    title: m.title,
+    category: m.category,
+    date: m.date,
+    popular: !!m.popular,
+    live: liveSet.has(m.id),
+    teams: m.teams || null,
+    streams: streamsById.get(m.id) || [],
+  }));
+  events.sort((a, b) => (b.live ? 1 : 0) - (a.live ? 1 : 0) || (b.popular ? 1 : 0) - (a.popular ? 1 : 0) || a.date - b.date);
+
+  const withStreams = events.filter((e) => e.streams.length).length;
+  writeFileSync('feed.json', JSON.stringify({ updated: Date.now(), base, count: events.length, resolved: withStreams, events }));
+  console.log(`done — ${events.length} scheduled, ${withStreams} with live streams`);
 }
 
 main().catch((e) => {
