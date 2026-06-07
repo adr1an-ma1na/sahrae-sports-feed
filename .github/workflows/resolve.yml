@@ -1,0 +1,43 @@
+name: Resolve sports feed
+
+on:
+  schedule:
+    - cron: '*/15 * * * *'   # every 15 minutes
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: resolve
+  cancel-in-progress: true
+
+jobs:
+  resolve:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install deps (Puppeteer downloads Chromium)
+        run: npm install --no-audit --no-fund
+
+      - name: Resolve live streams
+        run: node resolve.mjs
+
+      - name: Show feed summary
+        run: |
+          echo "count: $(node -e 'console.log(require("./feed.json").count)')"
+          node -e 'const f=require("./feed.json"); (f.events||[]).slice(0,5).forEach(e=>console.log("-",e.title,"=>",(e.streams||[]).map(s=>s.m3u8.slice(0,70)).join(" | ")))'
+
+      - name: Commit feed
+        run: |
+          git config user.name "sahrae-feed-bot"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add feed.json
+          git commit -m "feed update $(date -u +%FT%TZ)" || echo "no changes"
+          git push
