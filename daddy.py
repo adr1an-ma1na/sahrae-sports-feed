@@ -125,16 +125,34 @@ def parse_time(date_key: str, hhmm: str) -> int:
 
 async def main():
     session = AsyncSession(impersonate="chrome")
-    schedule, base = None, None
+
+    # Schedule from the reachable cache CDN (works from any IP).
+    schedule = None
+    try:
+        r = await session.get("https://daddylive.eu/cache/tv/tv.json", headers=headers("https://daddylive.eu/"), timeout=25)
+        print(f"schedule (daddylive.eu): {r.status_code}")
+        if r.status_code == 200:
+            schedule = r.json()
+    except Exception as e:
+        print("schedule error:", type(e).__name__, e)
+
+    # Probe which resolution domain is reachable (these sit behind Cloudflare).
+    base = None
     for b in BASES:
         try:
-            r = await session.get(f"{b}/schedule/schedule-generated.php", headers=headers(b), timeout=25)
-            if r.status_code == 200:
-                schedule = r.json()
+            pr = await session.get(f"{b}/", headers=headers(b), timeout=18)
+            txt = (pr.text or "")[:200].lower()
+            cf = "cloudflare" in txt or "just a moment" in txt or "challenge" in txt
+            print(f"probe {b}: {pr.status_code}{' [cloudflare-challenge]' if cf else ''}")
+            if pr.status_code == 200 and not cf:
                 base = b
                 break
-        except Exception:
-            continue
+        except Exception as e:
+            print(f"probe {b}: ERR {type(e).__name__}")
+    if base is None:
+        base = BASES[0]
+    print(f"resolution base: {base}")
+
     if not schedule:
         with open("feed.json", "w") as f:
             json.dump({"updated": int(time.time() * 1000), "count": 0, "resolved": 0, "events": []}, f)
