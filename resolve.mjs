@@ -8,9 +8,15 @@ import Stealth from 'puppeteer-extra-plugin-stealth';
 
 puppeteer.use(Stealth());
 
+// The stealth plugin can throw async teardown errors (TargetCloseError) when a
+// page is closed mid-setup. Swallow stray errors so they never crash the run —
+// this is a best-effort scraper and feed.json must still be written.
+process.on('unhandledRejection', (e) => console.warn('unhandledRejection:', e?.message || e));
+process.on('uncaughtException', (e) => console.warn('uncaughtException:', e?.message || e));
+
 const BASES = ['https://streamed.pk', 'https://streamed.su', 'https://streamed.st'];
 const MAX_EVENTS = 36;
-const CONCURRENCY = 5;
+const CONCURRENCY = 3;
 const UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
 
