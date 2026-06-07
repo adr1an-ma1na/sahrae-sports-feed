@@ -15,7 +15,7 @@ process.on('unhandledRejection', (e) => console.warn('unhandledRejection:', e?.m
 process.on('uncaughtException', (e) => console.warn('uncaughtException:', e?.message || e));
 
 const BASES = ['https://streamed.pk', 'https://streamed.su', 'https://streamed.st'];
-const MAX_EVENTS = 44;
+const MAX_EVENTS = 32;
 const CONCURRENCY = 4;
 const UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
@@ -32,35 +32,54 @@ async function getJSON(path) {
   return null;
 }
 
+const M3U8 = /\.m3u8(\?|$)/i;
+
 async function resolveEmbed(browser, embedUrl) {
   const page = await browser.newPage();
   await page.setUserAgent(UA);
   await page.setViewport({ width: 1280, height: 720 });
   let found = null;
-  page.on('request', (req) => {
-    const u = req.url();
-    if (!found && /\.m3u8(\?|$)/i.test(u)) {
-      found = { m3u8: u, referer: req.headers()['referer'] || embedUrl };
-    }
+  let reqCount = 0;
+  const capture = (url, ref) => {
+    if (found || !url) return;
+    if (M3U8.test(url)) found = { m3u8: url, referer: ref || embedUrl };
+  };
+  page.on('request', (req) => { reqCount++; capture(req.url(), req.headers()['referer']); });
+  page.on('response', (res) => {
+    try {
+      const ct = (res.headers()['content-type'] || '').toLowerCase();
+      if (!found && (ct.includes('mpegurl') || M3U8.test(res.url()))) {
+        capture(res.url(), res.request().headers()['referer']);
+      }
+    } catch {}
   });
+
+  // Actively start playback across the page + every nested frame.
+  const triggerPlay = async () => {
+    for (const f of page.frames()) {
+      try {
+        await f.evaluate(() => {
+          document.querySelectorAll('video').forEach((v) => { try { v.muted = true; const p = v.play(); if (p && p.catch) p.catch(() => {}); } catch (e) {} });
+          const btn = document.querySelector('.vjs-big-play-button, .play-button, .play, [class*="play"], button');
+          try { (btn || document.body).click(); } catch (e) {}
+        });
+      } catch {}
+    }
+    try { await page.mouse.click(640, 360); } catch {}
+  };
+
   try {
-    await page.goto(embedUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
-    const vp = page.viewport() || { width: 1280, height: 720 };
-    const cx = vp.width / 2;
-    const cy = vp.height / 2;
-    // Players often need a tap (sometimes two — to dismiss an overlay, then play).
-    await sleep(1500);
-    try { await page.mouse.click(cx, cy); } catch {}
+    await page.goto(embedUrl, { waitUntil: 'domcontentloaded', timeout: 25000 });
     await sleep(1200);
-    try { await page.mouse.click(cx, cy); } catch {}
-    // Wait up to ~18s for the stream request to appear.
-    for (let i = 0; i < 36 && !found; i++) {
-      if (i === 14 || i === 26) { try { await page.mouse.click(cx, cy); } catch {} }
+    await triggerPlay();
+    // Wait up to ~17s, re-triggering play periodically.
+    for (let i = 0; i < 34 && !found; i++) {
+      if (i === 5 || i === 13 || i === 24) await triggerPlay();
       await sleep(500);
     }
   } catch {}
   await page.close().catch(() => {});
-  return found;
+  return found || { _fail: true, reqCount };
 }
 
 async function main() {
@@ -98,21 +117,22 @@ async function main() {
       const ev = toResolve[idx++];
       const streams = [];
       let attempts = 0;
+      let lastReq = -1;
+      // Try up to 4 distinct source servers (alpha/bravo/echo/…), first streamNo each.
       for (const src of ev.sources || []) {
-        if (attempts >= 3 || streams.length >= 2) break;
-        attempts++;
+        if (attempts >= 4 || streams.length >= 2) break;
         try {
           const r = await fetch(`${base}/api/stream/${src.source}/${src.id}`, { headers: { 'User-Agent': UA } });
           if (!r.ok) continue;
           const list = await r.json();
-          for (const st of (Array.isArray(list) ? list : []).slice(0, 2)) {
-            if (streams.length >= 2) break;
-            if (!st?.embedUrl) continue;
-            const resolved = await resolveEmbed(browser, st.embedUrl);
-            if (resolved) {
-              streams.push({ label: `${String(src.source).toUpperCase()} ${st.streamNo || ''}`.trim(), m3u8: resolved.m3u8, referer: resolved.referer });
-              break;
-            }
+          const st = (Array.isArray(list) ? list : [])[0];
+          if (!st?.embedUrl) continue;
+          attempts++;
+          const resolved = await resolveEmbed(browser, st.embedUrl);
+          if (resolved && resolved.m3u8) {
+            streams.push({ label: `${String(src.source).toUpperCase()} ${st.streamNo || ''}`.trim(), m3u8: resolved.m3u8, referer: resolved.referer });
+          } else if (resolved) {
+            lastReq = resolved.reqCount;
           }
         } catch {}
       }
@@ -120,7 +140,7 @@ async function main() {
         streamsById.set(ev.id, streams);
         console.log('  ✓', ev.title, `(${streams.length})`);
       } else {
-        console.log('  ✗', ev.title);
+        console.log('  ✗', ev.title, `(tries:${attempts} reqs:${lastReq})`);
       }
     }
   }
