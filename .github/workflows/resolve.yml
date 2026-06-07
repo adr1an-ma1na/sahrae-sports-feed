@@ -15,7 +15,7 @@ concurrency:
 jobs:
   resolve:
     runs-on: ubuntu-latest
-    timeout-minutes: 12
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
 
@@ -30,11 +30,13 @@ jobs:
         run: node resolve.mjs
 
       - name: Show feed summary
+        if: always()
         run: |
-          echo "count: $(node -e 'console.log(require("./feed.json").count)')"
-          node -e 'const f=require("./feed.json"); (f.events||[]).slice(0,5).forEach(e=>console.log("-",e.title,"=>",(e.streams||[]).map(s=>s.m3u8.slice(0,70)).join(" | ")))'
+          grep -o '"count":[0-9]*' feed.json || true
+          head -c 400 feed.json || true
 
       - name: Commit feed
+        if: always()
         run: |
           git config user.name "sahrae-feed-bot"
           git config user.email "github-actions[bot]@users.noreply.github.com"

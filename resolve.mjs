@@ -9,8 +9,8 @@ import Stealth from 'puppeteer-extra-plugin-stealth';
 puppeteer.use(Stealth());
 
 const BASES = ['https://streamed.pk', 'https://streamed.su', 'https://streamed.st'];
-const MAX_EVENTS = 40;
-const CONCURRENCY = 4;
+const MAX_EVENTS = 36;
+const CONCURRENCY = 5;
 const UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
 
@@ -39,12 +39,19 @@ async function resolveEmbed(browser, embedUrl) {
   });
   try {
     await page.goto(embedUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
-    await sleep(2500);
-    try {
-      const vp = page.viewport() || { width: 1280, height: 720 };
-      await page.mouse.click(vp.width / 2, vp.height / 2);
-    } catch {}
-    for (let i = 0; i < 36 && !found; i++) await sleep(500);
+    const vp = page.viewport() || { width: 1280, height: 720 };
+    const cx = vp.width / 2;
+    const cy = vp.height / 2;
+    // Players often need a tap (sometimes two — to dismiss an overlay, then play).
+    await sleep(1500);
+    try { await page.mouse.click(cx, cy); } catch {}
+    await sleep(1200);
+    try { await page.mouse.click(cx, cy); } catch {}
+    // Wait up to ~18s for the stream request to appear.
+    for (let i = 0; i < 36 && !found; i++) {
+      if (i === 14 || i === 26) { try { await page.mouse.click(cx, cy); } catch {} }
+      await sleep(500);
+    }
   } catch {}
   await page.close().catch(() => {});
   return found;
@@ -69,17 +76,25 @@ async function main() {
     while (idx < events.length) {
       const ev = events[idx++];
       const streams = [];
-      for (const src of (ev.sources || []).slice(0, 2)) {
+      let attempts = 0;
+      for (const src of ev.sources || []) {
+        if (attempts >= 3 || streams.length >= 2) break;
+        attempts++;
         try {
           const r = await fetch(`${base}/api/stream/${src.source}/${src.id}`, { headers: { 'User-Agent': UA } });
           if (!r.ok) continue;
           const list = await r.json();
-          const embedUrl = list?.[0]?.embedUrl;
-          if (!embedUrl) continue;
-          const resolved = await resolveEmbed(browser, embedUrl);
-          if (resolved) streams.push({ label: String(src.source).toUpperCase(), m3u8: resolved.m3u8, referer: resolved.referer });
+          // Try the first couple of stream numbers for this source.
+          for (const st of (Array.isArray(list) ? list : []).slice(0, 2)) {
+            if (streams.length >= 2) break;
+            if (!st?.embedUrl) continue;
+            const resolved = await resolveEmbed(browser, st.embedUrl);
+            if (resolved) {
+              streams.push({ label: `${String(src.source).toUpperCase()} ${st.streamNo || ''}`.trim(), m3u8: resolved.m3u8, referer: resolved.referer });
+              break;
+            }
+          }
         } catch {}
-        if (streams.length >= 2) break;
       }
       if (streams.length) {
         results.push({ id: ev.id, title: ev.title, category: ev.category, date: ev.date, popular: !!ev.popular, teams: ev.teams || null, streams });
