@@ -2,7 +2,7 @@ name: Resolve sports feed
 
 on:
   schedule:
-    - cron: '*/10 * * * *'   # every 10 minutes (fresher tokens)
+    - cron: '*/10 * * * *'   # every 10 minutes
   workflow_dispatch:
 
 permissions:
@@ -15,30 +15,30 @@ concurrency:
 jobs:
   resolve:
     runs-on: ubuntu-latest
-    timeout-minutes: 18
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-python@v5
         with:
-          node-version: 20
+          python-version: '3.12'
 
-      - name: Install deps (Puppeteer downloads Chromium)
-        run: npm install --no-audit --no-fund
+      - name: Install resolver deps
+        run: pip install "curl_cffi>=0.7"
 
-      - name: Resolve live streams
-        run: node resolve.mjs
+      - name: Resolve DaddyLive schedule + streams
+        run: python daddy.py
 
       - name: Show feed summary
         if: always()
         run: |
-          grep -o '"count":[0-9]*' feed.json || true
+          grep -oE '"count":[0-9]+|"resolved":[0-9]+|"base":"[^"]*"' feed.json || true
           head -c 400 feed.json || true
 
       - name: Commit feed
         if: always()
         run: |
-          if [ ! -f feed.json ]; then echo "no feed.json produced; skipping"; exit 0; fi
+          if [ ! -f feed.json ]; then echo "no feed.json"; exit 0; fi
           git config user.name "sahrae-feed-bot"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add feed.json
