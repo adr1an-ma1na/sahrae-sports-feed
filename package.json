@@ -1,15 +1,10 @@
 {
   "name": "sahrae-sports-feed",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "private": false,
   "type": "module",
-  "description": "Resolves live sports event streams into feed.json for the Sahrae app.",
+  "description": "Publishes the live sports schedule + embed URLs as feed.json for the Sahrae app (streams resolve on-device).",
   "scripts": {
     "resolve": "node resolve.mjs"
-  },
-  "dependencies": {
-    "puppeteer": "^23.11.1",
-    "puppeteer-extra": "^3.3.6",
-    "puppeteer-extra-plugin-stealth": "^2.11.2"
   }
 }
