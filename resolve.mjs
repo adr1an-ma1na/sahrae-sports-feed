@@ -67,10 +67,13 @@ async function main() {
   const today = todayRes?.data || [];
 
   const liveSet = new Set(live.map((m) => m.id));
+  const FINISHED_MS = 3.5 * 60 * 60 * 1000; // hide events that ended a while ago
   const seen = new Set();
   const schedule = [];
   for (const m of [...live, ...today]) {
     if (!m?.id || seen.has(m.id) || !m.sources?.length) continue;
+    // Skip events that are clearly over (not live and started long ago).
+    if (!liveSet.has(m.id) && m.date && now - m.date > FINISHED_MS) continue;
     seen.add(m.id);
     schedule.push(m);
   }
