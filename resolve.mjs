@@ -12,8 +12,11 @@ import { writeFileSync } from 'fs';
 const BASES = ['https://streamed.pk', 'https://streamed.su', 'https://streamed.st'];
 const UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
-const SOON_MS = 45 * 60 * 1000;       // also resolve embeds for events starting within 45 min
-const STALE_MS = 6 * 60 * 60 * 1000;  // …or that started up to 6h ago (long events still live)
+const SOON_MS = 6 * 60 * 60 * 1000;   // resolve embeds up to 6h BEFORE kickoff, so an
+                                      // upcoming event lists its servers early (as soon
+                                      // as the provider posts a stream) instead of
+                                      // opening with only the fallback channel
+const STALE_MS = 6 * 60 * 60 * 1000;  // …and up to 6h after start (long events still live)
 const MAX_RESOLVE = 100;
 const MAX_EMBEDS = 6;
 const CONCURRENCY = 8;
@@ -80,7 +83,7 @@ async function main() {
 
   // Resolve embeds for events that are actually streamable now (live / soon / recently started).
   const resolvable = schedule.filter(
-    (m) => liveSet.has(m.id) || (m.date && m.date - now < SOON_MS && now - m.date < STALE_MS)
+    (m) => liveSet.has(m.id) || !m.date || (m.date - now < SOON_MS && now - m.date < STALE_MS)
   );
   resolvable.sort(
     (a, b) =>
