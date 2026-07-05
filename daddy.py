@@ -5,9 +5,9 @@ DaddyLive (DLHD) resolver — full live-sports coverage.
 Replicates the current DaddyLive stream-resolution flow (as used by the
 maintained StepDaddyLiveHD project), using curl_cffi to impersonate Chrome's
 TLS so it passes Cloudflare without a browser. Pure HTTP = fast, so we can
-resolve the whole day's schedule. Writes feed.json that the Sahrae app reads
-and plays through its native HLS proxy (which supplies the Referer the
-newkso.ru CDN requires).
+resolve the whole day's schedule. Writes daddy.json (events -> already-resolved
+newkso.ru .m3u8 + referer) that the Sahrae app merges with the streamed feed and
+plays through its native HLS proxy (which supplies the Referer newkso.ru requires).
 """
 import asyncio
 import base64
@@ -154,7 +154,7 @@ async def main():
     print(f"resolution base: {base}")
 
     if not schedule:
-        with open("feed.json", "w") as f:
+        with open("daddy.json", "w") as f:
             json.dump({"updated": int(time.time() * 1000), "count": 0, "resolved": 0, "events": []}, f)
         print("no schedule reachable")
         return
@@ -220,7 +220,7 @@ async def main():
 
     out.sort(key=lambda e: (not e["live"], not e["popular"], e["date"]))
     with_streams = sum(1 for e in out if e["streams"])
-    with open("feed.json", "w") as f:
+    with open("daddy.json", "w") as f:
         json.dump({"updated": now, "base": base, "count": len(out), "resolved": with_streams, "events": out}, f)
     print(f"done — {len(out)} events, {with_streams} with live streams")
 

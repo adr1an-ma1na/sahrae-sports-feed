@@ -23,21 +23,35 @@ jobs:
         with:
           node-version: 20
 
-      - name: Publish schedule + embed URLs
+      - name: Publish schedule + embed URLs (streamed)
         run: node resolve.mjs
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install curl_cffi
+        run: pip install --quiet curl_cffi
+
+      # DaddyLive channels → daddy.json. NON-FATAL: if Cloudflare blocks the CI IP
+      # or the resolver fails, it writes an empty daddy.json and the run continues,
+      # so the streamed feed.json is never affected.
+      - name: Resolve DaddyLive channels
+        continue-on-error: true
+        run: python daddy.py
 
       - name: Show feed summary
         if: always()
         run: |
-          grep -oE '"count":[0-9]+|"resolved":[0-9]+|"base":"[^"]*"' feed.json || true
-          head -c 400 feed.json || true
+          echo "feed.json:";  grep -oE '"count":[0-9]+|"resolved":[0-9]+' feed.json  || true
+          echo "daddy.json:"; grep -oE '"count":[0-9]+|"resolved":[0-9]+' daddy.json || true
 
-      - name: Commit feed
+      - name: Commit feeds
         if: always()
         run: |
           if [ ! -f feed.json ]; then echo "no feed.json"; exit 0; fi
           git config user.name "sahrae-feed-bot"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add feed.json
+          git add -A feed.json daddy.json
           git commit -m "feed update $(date -u +%FT%TZ)" || { echo "no changes"; exit 0; }
           git push
